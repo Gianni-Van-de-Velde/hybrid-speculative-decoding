@@ -784,6 +784,13 @@ class Model(nn.Module):
         tree_mask = tree_mask.float()[None, None]
         draft_tokens = draft_tokens[None]
 
+        # Put this before in jupyter:
+        # model.ea_layer.draft_scores = []
+        # model.ea_layer.topK_genrate = topK_genrate.__get__(model.ea_layer, model.ea_layer.__class__)
+
+        # Uncomment this
+        # self.draft_scores.append(top_scores.values)
+
         del parents_list, scores_list, ss_token, ss_token_list, draft_parents
 
         # with Timer("retrieve"):

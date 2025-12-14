@@ -1,0 +1,22 @@
+{
+    "english": "Use the following pieces of context to answer the question./n{passages}/nQuestion: {query}",
+    "chinese": "使用以下上下文来回答问题。/n{passages}/n问题： {query}",
+    "french": "Utilisez les éléments de contexte suivants pour répondre à la question./n{passages}/nQuestion: {query}",
+    "german": "Verwenden Sie die folgenden Kontextelemente, um die Frage zu beantworten./n{passages}/nFrage: {query}",
+    "indonesian": "Gunakan potongan konteks berikut untuk menjawab pertanyaan./n{passages}/nPertanyaan: {query}",
+    "italian": "Utilizza i seguenti elementi di contesto per rispondere alla domanda./n{passages}/nDomanda: {query}",
+    "portuguese": "Use os seguintes trechos de contexto para responder à pergunta./n{passages}/nPergunta: {query}",
+    "russian": "Чтобы ответить на вопрос, используйте следующие фрагменты контекста./n{passages}/nВопрос: {query}",
+    "spanish": "Utilice los siguientes fragmentos de contexto para responder la pregunta./n{passages}/nPregunta: {query}",
+    "arabic": "استخدم أجزاء السياق التالية للإجابة على السؤال./n{passages}/nسؤال: {query}",
+    "dutch": "Gebruik de volgende contextfragmenten om de vraag te beantwoorden./n{passages}/nVraag: {query}",
+    "hindi": "प्रश्न का उत्तर देने के लिए निम्नलिखित संदर्भ का उपयोग करें।/n{passages}/nसवाल: {query}",
+    "japanese": "次の文脈を使用して質問に答えてください。/n{passages}/n質問： {query}",
+    "vietnamese": "Sử dụng các thông tin sau để trả lời câu hỏi./n{passages}/nCâu hỏi: {query}",
+    "bengali": "প্রশ্নের উত্তর দিতে নিম্নলিখিত প্রসঙ্গগুলি ব্যবহার করুন।/n{passages}/nপ্রশ্ন: {query}", 
+    "finnish": "Käytä seuraavia kontekstitietoja vastataksesi kysymykseen./n{passages}/nKysymys: {query}", 
+    "korean": "다음 맥락을 사용하여 질문에 답하세요./n{passages}/n질문: {query}", 
+    "swahili": "Tumia vipande vifuatavyo vya muktadha kujibu swali./n{passages}/nSwali: {query}", 
+    "telugu": "ప్రశ్నకు సమాధానం ఇవ్వడానికి కింది సందర్భ భాగాలను ఉపయోగించండి./n{passages}/nప్రశ్న: {query}", 
+    "thai": "ใช้บริบทต่อไปนี้เพื่อตอบคำถาม/n{passages}/nคำถาม: {query}"
+}

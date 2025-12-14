@@ -17,6 +17,12 @@ import time
 import shortuuid
 from fastchat.llm_judge.common import load_questions
 from tqdm import tqdm
+from codecarbon import EmissionsTracker
+
+# Load system prompts from JSON file
+prompts_path = "eagle/evaluation/metadata/system_prompts.json"
+with open(prompts_path, "r", encoding="utf-8") as f:
+    system_prompts = json.load(f)
 
 try:
     from ..model.ea_model import EaModel
@@ -26,7 +32,6 @@ except:
     from eagle.model.ea_model import EaModel
     from eagle.model.kv_cache import initialize_past_key_values
     from eagle.model.utils import *
-
 
 
 def run_eval(
@@ -43,7 +48,10 @@ def run_eval(
         num_gpus_total,
         max_gpu_memory,
         temperature,
-        args
+        continuation_length,
+        nr_continuations,
+        args,
+        model = None,
 ):
     questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -78,7 +86,10 @@ def run_eval(
                 num_gpus_per_model,
                 max_gpu_memory,
                 temperature,
-                args
+                continuation_length,
+                nr_continuations,
+                args,
+                model=model,
             )
         )
 
@@ -98,22 +109,26 @@ def get_model_answers(
         num_gpus_per_model,
         max_gpu_memory,
         temperature,
-        args
+        continuation_length,
+        nr_continuations,
+        args,
+        model = None,
 ):
     # temperature = 0.0
 
-    model = EaModel.from_pretrained(
-        base_model_path=base_model_path,
-        ea_model_path=ea_model_path,
-        total_token=args.total_token,
-        depth=args.depth,
-        top_k=args.top_k,
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-        # load_in_8bit=True,
-        device_map="auto",
-        use_eagle3=args.use_eagle3,
-    )
+    if model is None:
+        model = EaModel.from_pretrained(
+            base_model_path=base_model_path,
+            ea_model_path=ea_model_path,
+            total_token=args.total_token,
+            depth=args.depth,
+            top_k=args.top_k,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+            # load_in_8bit=True,
+            device_map="auto",
+            use_eagle3=args.use_eagle3,
+        )
 
     tokenizer = model.get_tokenizer()
 
@@ -134,10 +149,12 @@ def get_model_answers(
     for _ in range(3):
         torch.manual_seed(0)
 
+        # Get system prompt based on language
+        system_prompt = system_prompts.get(args.language, system_prompts["english"])
         messages = [
-            {"role": "system",
-             "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
+            {"role": "system", "content": system_prompt},
         ]
+
         turns = []
         idxs = []
         new_tokens = []
@@ -159,12 +176,26 @@ def get_model_answers(
             torch.cuda.synchronize()
             start_time = time.time()
 
-            output_ids, new_token, idx = model.eagenerate(
-                torch.as_tensor(input_ids).cuda(),
-                temperature=temperature,
-                log=True,
-                is_llama3=True,
-            )
+            if not args.use_casd and args.disable_eagle:
+                output_ids, new_token, idx = model.naivegenerate(
+                    torch.as_tensor(input_ids).cuda(),
+                    temperature=temperature,
+                    log=True,
+                    is_llama3=True,
+                    max_length=args.max_length,
+                )
+            else:
+                output_ids, new_token, idx = model.eagenerate(
+                    torch.as_tensor(input_ids).cuda(),
+                    temperature=temperature,
+                    log=True,
+                    is_llama3=True,
+                    max_length=args.max_length,
+                    use_casd=args.use_casd,
+                    disable_eagle=args.disable_eagle,
+                    continuation_length=continuation_length,
+                    nr_continuations=nr_continuations,
+                )
             torch.cuda.synchronize()
             total_time = time.time() - start_time
             output_ids = output_ids[0][len(input_ids[0]):]
@@ -216,12 +247,16 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
+            # Get system prompt based on language
+            system_prompt = system_prompts.get(args.language, system_prompts["english"])
             messages = [
-                {"role": "system",
-                 "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
+                {"role": "system", "content": system_prompt},
             ]
+
             turns = []
             idxs = []
+            energy = []
+            gpu_energy = []
             new_tokens = []
             wall_time = []
             for j in range(len(question["turns"])):
@@ -239,16 +274,36 @@ def get_model_answers(
 
                 # try:
                 torch.cuda.synchronize()
+                tracker = EmissionsTracker(project_name="EAGLE_benchmark", measure_power_secs=3)
+                tracker.start()
                 start_time = time.time()
 
-                output_ids, new_token, idx = model.eagenerate(
-                    torch.as_tensor(input_ids).cuda(),
-                    temperature=temperature,
-                    log=True,
-                    is_llama3=True,
-                )
+                if not args.use_casd and args.disable_eagle:
+                    output_ids, new_token, idx = model.naivegenerate(
+                        torch.as_tensor(input_ids).cuda(),
+                        temperature=temperature,
+                        log=True,
+                        is_llama3=True,
+                        max_length=args.max_length,
+                    )
+                else:
+                    output_ids, new_token, idx = model.eagenerate(
+                        torch.as_tensor(input_ids).cuda(),
+                        temperature=temperature,
+                        log=True,
+                        is_llama3=True,
+                        max_length=args.max_length,
+                        use_casd=args.use_casd,
+                        disable_eagle=args.disable_eagle,
+                        continuation_length=continuation_length,
+                        nr_continuations=nr_continuations,
+                    )
                 torch.cuda.synchronize()
                 total_time = time.time() - start_time
+                tracker.stop()
+                energy_consumption = tracker._total_energy.kWh
+                gpu_energy_consumption = tracker._total_gpu_energy.kWh
+
                 output_ids = output_ids[0][len(input_ids[0]):]
                 # be consistent with the template's stop_token_ids
                 stop_token_ids = [
@@ -282,6 +337,8 @@ def get_model_answers(
 
                 turns.append(output)
                 idxs.append(int(idx))
+                energy.append(energy_consumption)
+                gpu_energy.append(gpu_energy_consumption)
                 new_tokens.append(int(new_token))
                 wall_time.append(total_time)
                 messages.append({
@@ -289,7 +346,7 @@ def get_model_answers(
                     "content": output
                 })
             # torch.cuda.empty_cache()
-            choices.append({"index": i, "turns": turns, "idxs": idxs, "new_tokens": new_tokens, "wall_time": wall_time})
+            choices.append({"index": i, "turns": turns, "idxs": idxs, "energy": energy, "gpu_energy": gpu_energy, "new_tokens": new_tokens, "wall_time": wall_time})
 
         # Dump answers
         os.makedirs(os.path.dirname(answer_file), exist_ok=True)
@@ -335,8 +392,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--bench-name",
         type=str,
-        default="mt_bench",
-        help="The name of the benchmark question set.",
+        nargs="+",
+        default=["mt_bench"],
+        help="The list of names of the benchmarks question set.",
     )
     parser.add_argument(
         "--question-begin",
@@ -409,40 +467,116 @@ if __name__ == "__main__":
         action="store_true"
     )
 
+    parser.add_argument(
+        "--language",
+        type=str,
+        default="none",
+    )
+
+    parser.add_argument(
+        "--max_length",
+        type=int,
+        default=2048,
+    )
+    parser.add_argument(
+        "--continuation_length",
+        type=int,
+        nargs="+",
+        default=[10],
+    )
+    parser.add_argument(
+        "--nr_continuations",
+        type=int,
+        nargs="+",
+        default=[2],
+    )
+    parser.add_argument(
+        "--minimal_match_length",
+        type=int,
+        nargs="+",
+        default=[1],
+    )
+    parser.add_argument(
+        "--train_casd",
+        action="store_true"
+    )
+
     args = parser.parse_args()
 
     for k,v in vars(args).items():
         print(f"{k}={v}")
 
-    args.model_id = args.model_id + "-temperature-" + str(args.temperature)
     if args.num_gpus_total // args.num_gpus_per_model > 1:
         import ray
 
         ray.init()
 
-    question_file = f"{parent_dir}/data/{args.bench_name}/question.jsonl"
-    if args.answer_file:
-        answer_file = args.answer_file
-    else:
-        answer_file = f"{args.bench_name}/{args.model_id}.jsonl"
-
-    print(f"Output to {answer_file}")
-
-    run_eval(
-        args.base_model_path,
-        args.ea_model_path,
-        args.model_id,
-        question_file,
-        args.question_begin,
-        args.question_end,
-        answer_file,
-        args.max_new_token,
-        args.num_choices,
-        args.num_gpus_per_model,
-        args.num_gpus_total,
-        args.max_gpu_memory,
-        args.temperature,
-        args
+    # Load once such that you do not blow up your VRAM
+    model = EaModel.from_pretrained(
+        base_model_path=args.base_model_path,
+        ea_model_path=args.ea_model_path,
+        total_token=args.total_token,
+        depth=args.depth,
+        top_k=args.top_k,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True,
+        # load_in_8bit=True,
+        device_map="auto",
+        use_eagle3=args.use_eagle3,
     )
+    
+    model_id = args.model_id
+    language = args.language
+    for bench in args.bench_name:
+        if language.lower() == "none":
+            # Automatically read language from benchmark name
+            args.language = bench.split("-")[-1]
+        # Run with and without CASD in the same session. This is important for consistent GPU conditions
+        for continuation_length in args.continuation_length:
+            for nr_continuations in args.nr_continuations:
+                for minimal_match_length in args.minimal_match_length:
+                    for use_casd in [False, True]:
+                        args.use_casd = use_casd
+                        model_id_prefix_1 = "CASD-ext-" if use_casd else ""
+                        for disable_eagle in [False, True]:
+                            args.disable_eagle = disable_eagle
+                            model_id_prefix_2 = "" if disable_eagle else "EAGLE3-"
 
-    reorg_answer_file(answer_file)
+                            if args.train_casd and (not use_casd or disable_eagle):
+                                continue
+
+                            args.model_id = model_id_prefix_1 + model_id_prefix_2 + model_id + "-temperature-" + str(args.temperature) + "-continuation_length-" + str(continuation_length) + "-nr_continuations-" + str(nr_continuations) + "-minimal_match_length-" + str(minimal_match_length)
+                            print(f"Run {bench} with {args.model_id} and language {args.language} ")
+
+                            question_file = f"{parent_dir}/data/{bench}/question.jsonl"
+                            if args.answer_file:
+                                answer_file = args.answer_file
+                            else:
+                                answer_file = f"{bench}/{args.model_id}.jsonl"
+                            # I prefer to skip existing results to avoid mistakes
+                            if os.path.exists(answer_file):
+                                continue
+
+                            print(f"Output to {answer_file}")
+
+                            run_eval(
+                                args.base_model_path,
+                                args.ea_model_path,
+                                args.model_id,
+                                question_file,
+                                args.question_begin,
+                                args.question_end,
+                                answer_file,
+                                args.max_new_token,
+                                args.num_choices,
+                                args.num_gpus_per_model,
+                                args.num_gpus_total,
+                                args.max_gpu_memory,
+                                args.temperature,
+                                continuation_length,
+                                nr_continuations,
+                                args,
+                                model=model,
+                            )
+
+                            reorg_answer_file(answer_file)

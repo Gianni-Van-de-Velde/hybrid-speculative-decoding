@@ -15,6 +15,7 @@ import shortuuid
 from fastchat.llm_judge.common import load_questions
 from fastchat.model import get_conversation_template
 from tqdm import tqdm
+from codecarbon import EmissionsTracker
 
 from ..model.ea_model import EaModel
 from ..model.kv_cache import initialize_past_key_values
@@ -36,7 +37,8 @@ def run_eval(
         num_gpus_total,
         max_gpu_memory,
         temperature,
-        args
+        args,
+        model = None,
 ):
     questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -71,7 +73,8 @@ def run_eval(
                 num_gpus_per_model,
                 max_gpu_memory,
                 temperature,
-                args
+                args,
+                model=model,
             )
         )
 
@@ -91,21 +94,23 @@ def get_model_answers(
         num_gpus_per_model,
         max_gpu_memory,
         temperature,
-        args
+        args,
+        model = None,
 ):
     # temperature = 0.0
 
-    model = EaModel.from_pretrained(
-        base_model_path=base_model_path,
-        ea_model_path=ea_model_path,
-        total_token=args.total_token,
-        depth=args.depth,
-        top_k=args.top_k,
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True,
-        # load_in_8bit=True,
-        device_map="auto"
-    )
+    if model is None:
+        model = EaModel.from_pretrained(
+            base_model_path=base_model_path,
+            ea_model_path=ea_model_path,
+            total_token=args.total_token,
+            depth=args.depth,
+            top_k=args.top_k,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+            # load_in_8bit=True,
+            device_map="auto"
+        )
 
     tokenizer = model.get_tokenizer()
 
@@ -198,6 +203,7 @@ def get_model_answers(
             conv.system_message = sys_p
             turns = []
             idxs = []
+            energy = []
             new_tokens = []
             wall_time = []
             for j in range(len(question["turns"])):
@@ -209,6 +215,8 @@ def get_model_answers(
 
 
                 torch.cuda.synchronize()
+                tracker = EmissionsTracker(project_name="EAGLE_benchmark", measure_power_secs=3)
+                tracker.start()
                 start_time = time.time()
                 output_ids, new_token, idx = model.eagenerate(
                     torch.as_tensor(input_ids).cuda(),
@@ -217,6 +225,9 @@ def get_model_answers(
                 )
                 torch.cuda.synchronize()
                 total_time = time.time() - start_time
+                tracker.stop()
+                energy_consumption = tracker._total_energy.kWh
+
                 output_ids = output_ids[0][len(input_ids[0]):]
 
                 if conv.stop_token_ids:
@@ -248,11 +259,12 @@ def get_model_answers(
 
                 turns.append(output)
                 idxs.append(int(idx))
+                energy.append(energy_consumption)
                 new_tokens.append(int(new_token))
                 wall_time.append(total_time)
                 conv.messages[-1][-1] = output
             # torch.cuda.empty_cache()
-            choices.append({"index": i, "turns": turns, "idxs": idxs, "new_tokens": new_tokens, "wall_time": wall_time})
+            choices.append({"index": i, "turns": turns, "idxs": idxs, "energy": energy, "new_tokens": new_tokens, "wall_time": wall_time})
 
         # Dump answers
         os.makedirs(os.path.dirname(answer_file), exist_ok=True)
