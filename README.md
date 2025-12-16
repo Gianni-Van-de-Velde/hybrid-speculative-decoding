@@ -5,21 +5,6 @@ Hybrid speculative decoding investigates the benefit of a hybrid speculative dec
 Hybrid speculativde decoding achieves:
 - 7.3% more accepted tokens $\tau$ for the same token budget
 
-## Contents (mostly copied from EAGLE)
-
-- [Setup & Installation](#setup--installation)
-- [EAGLE-3 Weights](#eagle-3-weights)
-- [EAGLE Weights](#eagle-weights)
-- [Inference](#inference)
-  - [With UI](#with-ui)
-  - [With Code](#with-code)
-- [Train](#train)
-  - [Generate Train Data](#generate-train-data)
-  - [Train the Auto-regression Head](#train-the-auto-regression-head)
-  - [Inference on custom models](#inference-on-custom-models)
-- [Evaluation](#evaluation)
-
-
 ## Setup & Installation
 
 
